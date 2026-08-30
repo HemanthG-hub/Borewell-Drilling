@@ -1,0 +1,136 @@
+{
+  "theme": "dark",
+  "archetype": "The Performance Pro / Industrial Command Center",
+  "typography": {
+    "headings": {
+      "font_family": "Chivo, sans-serif",
+      "style": "Industrial, heavy weight, tracking-tight",
+      "classes": "font-sans font-black tracking-tighter"
+    },
+    "body": {
+      "font_family": "JetBrains Mono, monospace",
+      "style": "Technical, highly legible for data",
+      "classes": "font-mono text-sm leading-relaxed tracking-tight"
+    },
+    "forbidden_fonts": [
+      "Inter",
+      "Roboto",
+      "Space Grotesk",
+      "Open Sans",
+      "Lato"
+    ]
+  },
+  "colors": {
+    "background": {
+      "primary": "#0A0A0A",
+      "secondary": "#121212",
+      "tertiary": "#1E1E1E"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A"
+    },
+    "accent": {
+      "primary": "#FFB000",
+      "secondary": "#E35205",
+      "danger": "#FF3B30",
+      "success": "#34C759"
+    },
+    "forbidden_colors": [
+      "#1B93A4",
+      "teal green",
+      "teal blue",
+      "#7351B7"
+    ]
+  },
+  "visual_enhancers": {
+    "surfaces": "Grid Borders (The 'Technical' Look) with 1px border-border/40, flat backgrounds.",
+    "shadows": "Minimal. Rely on 1px borders to separate elements. No soft shadows.",
+    "textures": "Subtle noise overlay to break digital flatness, maintaining an industrial matte finish.",
+    "borders": "Sharp edges, max rounded-sm (2px) or completely square (rounded-none)."
+  },
+  "grids_and_layouts": {
+    "strategy": "High Density Grid (Bento Mode B)",
+    "container": "w-full max-w-[1920px] mx-auto p-4 md:p-6",
+    "gap": "gap-4",
+    "widget_ratios": {
+      "kpi": "col-span-1 row-span-1",
+      "main_chart": "col-span-2 row-span-2 md:col-span-3",
+      "feed": "col-span-1 row-span-2"
+    },
+    "alignment": "Optical alignment, text left-aligned for data readability."
+  },
+  "components": {
+    "libraries": {
+      "icons": "@phosphor-icons/react",
+      "charts": "recharts",
+      "maps": "react-leaflet",
+      "ui": "shadcn/ui"
+    },
+    "buttons": "Square or slight radius, flat color or 1px border. Hover states use slight brightness increase.",
+    "cards": "Cardless aesthetic. Use simple divs with border-b border-r and flat backgrounds. Never use default rounded-xl Shadcn cards.",
+    "forms": "Use Shadcn inputs but remove heavy border radius. Use JetBrains Mono for input text.",
+    "headers": "Solid background (#121212) with hard bottom border. Never use transparent background."
+  },
+  "motion": {
+    "strategy": "Minimalist. Snappy, immediate feedback.",
+    "hover": "Instant color shift or 1px translation. No long fades.",
+    "transitions": "transition-colors duration-150 ease-in-out (Avoid 'transition-all')"
+  },
+  "accessibility": {
+    "contrast": "Ensure APCA contrast ratio. Minimum 4.5:1 for normal text.",
+    "testing": "All interactive elements MUST have data-testid attributes (e.g., data-testid='recall-engine-button').",
+    "focus": "High-contrast amber focus rings: focus:ring-2 focus:ring-[#FFB000] focus:outline-none"
+  },
+  "media": {
+    "images": [
+      {
+        "url": "https://images.pexels.com/photos/30475898/pexels-photo-30475898.jpeg",
+        "category": "hero_background",
+        "description": "A dramatic offshore oil rig brilliantly lit against the nighttime sky."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1621905252472-943afaa20e20",
+        "category": "avatar",
+        "description": "Engineer holding hardhat."
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1764866180481-655426befcf4",
+        "category": "texture_overlay",
+        "description": "Close-up of industrial machinery."
+      }
+    ]
+  },
+  "specific_pages": {
+    "dashboard": "Leaflet map taking central prominence. KPIs flanked on the sides.",
+    "case_library": "Dense data tables, minimal padding in cells. JetBrains mono for metrics.",
+    "recall_engine": "Split view: New event parameters vs top matching historical cases. Use color coding (amber) to highlight matches.",
+    "evidence_viewer": "Multi-pane view. Sensor traces in Recharts, logs text-heavy in monospace.",
+    "conflict_detection": "Warning indicators (Signal Red) for contradictory evidence. Side-by-side comparison.",
+    "ai_assistant": "Floating or docked side panel, distinct background (#121212) to separate from data widgets."
+  },
+  "instructions_to_main_agent": [
+    "NOTE: You have .js files, NOT .tsx files. Write all code, including React components, using .jsx or .js extension semantics.",
+    "Install @phosphor-icons/react, recharts, react-leaflet, leaflet.",
+    "Configure Tailwind with the specified colors and fonts (Chivo, JetBrains Mono). Include font imports in HTML/CSS.",
+    "Use Shadcn UI but override border radii to be 0 or 2px to maintain the industrial workstation feel.",
+    "DO NOT use complete transparent background in headers, overlays, or any surface that has content under it. Example: Dropdowns MUST have a solid background like #121212.",
+    "Implement routing (e.g., react-router-dom) so clicking any features navigates to the respective pages.",
+    "Ensure the dashboard uses a dense, technical layout without excessive empty space.",
+    "Use realistic mock data for drilling parameters (e.g., ROP, Mud Weight, Depth, Kicks, Stuck Pipe)."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use generic centered layouts or simplistic gradients.",
+    "Create depth through layered z-index hierarchy, not soft shadows.",
+    "Do not apply 'transition: all'.",
+    "Never center align the app container (.App { text-align: center; }).",
+    "Use square or sharp buttons to match the industrial style.",
+    "Never use AI assistant emojis (like robot or brain).",
+    "Every interaction needs micro-animations.",
+    "Include data-testid on all interactive elements.",
+    "Use sonner for toasts.",
+    "Prioritize pre-existing components from src/components/ui.",
+    "Avoid the 'AI slop' aesthetic by ensuring components look purpose-built, raw, and functional."
+  ]
+}

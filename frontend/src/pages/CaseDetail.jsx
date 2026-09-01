@@ -3,7 +3,167 @@ import { useParams, Link } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { fetchCase, fetchSensorTrace, fetchCaseEvidence } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
-import { ArrowLeftIcon, FileTextIcon, WarningOctagonIcon, LightbulbFilamentIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, FileTextIcon, WarningOctagonIcon, LightbulbFilamentIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
+import jsPDF from "jspdf";
+import { toast } from "sonner";
+
+function generatePdf(caseData, evidence, trace) {
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const W = doc.internal.pageSize.getWidth();
+  let y = 50;
+
+  // Header
+  doc.setFillColor(10, 10, 10);
+  doc.rect(0, 0, W, 70, "F");
+  doc.setTextColor(255, 176, 0);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.text("RIGRECALL", 40, 35);
+  doc.setFontSize(10);
+  doc.setTextColor(161, 161, 170);
+  doc.text("INCIDENT REPORT", 40, 52);
+  doc.setFontSize(9);
+  doc.text(new Date().toISOString().slice(0, 19).replace("T", " "), W - 40, 35, { align: "right" });
+
+  y = 100;
+  // Case title
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(20);
+  doc.setFont("helvetica", "bold");
+  doc.text(`${caseData.id} · ${caseData.event_type.replace("_", " ").toUpperCase()}`, 40, y);
+  y += 18;
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(80, 80, 80);
+  doc.text(`${caseData.well_name} · ${caseData.formation} @ ${caseData.depth_ft.toLocaleString()} ft`, 40, y);
+  y += 25;
+
+  // Summary grid
+  doc.setFillColor(245, 245, 245);
+  doc.rect(40, y, W - 80, 60, "F");
+  doc.setTextColor(100, 100, 100);
+  doc.setFontSize(8);
+  const cols = [
+    ["SEVERITY", caseData.severity.toUpperCase()],
+    ["OUTCOME", caseData.outcome.toUpperCase()],
+    ["TIME LOST", `${caseData.time_lost_hrs} h`],
+    ["COST", `$${(caseData.cost_impact_usd / 1000).toFixed(0)}k`],
+    ["DATE", caseData.date],
+  ];
+  const colW = (W - 80) / cols.length;
+  cols.forEach(([label, val], i) => {
+    const cx = 40 + i * colW + 10;
+    doc.setFontSize(7); doc.setTextColor(120, 120, 120);
+    doc.text(label, cx, y + 18);
+    doc.setFontSize(14); doc.setTextColor(20, 20, 20); doc.setFont("helvetica", "bold");
+    doc.text(String(val), cx, y + 40);
+    doc.setFont("helvetica", "normal");
+  });
+  y += 80;
+
+  // Sensor trace chart (drawn manually as line chart)
+  doc.setFontSize(11);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont("helvetica", "bold");
+  doc.text("Sensor Trace · Torque vs Depth", 40, y);
+  y += 10;
+  const chartH = 130, chartW = W - 80, chartX = 40, chartY = y;
+  doc.setDrawColor(200, 200, 200);
+  doc.rect(chartX, chartY, chartW, chartH);
+  // event line
+  if (trace.length > 0) {
+    const depths = trace.map(t => t.depth_ft);
+    const torques = trace.map(t => t.torque_kftlbs);
+    const dMin = Math.min(...depths), dMax = Math.max(...depths);
+    const tMin = Math.min(...torques), tMax = Math.max(...torques);
+    doc.setDrawColor(255, 176, 0);
+    doc.setLineWidth(1.5);
+    for (let i = 1; i < trace.length; i++) {
+      const x1 = chartX + ((depths[i - 1] - dMin) / (dMax - dMin || 1)) * chartW;
+      const y1 = chartY + chartH - ((torques[i - 1] - tMin) / (tMax - tMin || 1)) * chartH;
+      const x2 = chartX + ((depths[i] - dMin) / (dMax - dMin || 1)) * chartW;
+      const y2 = chartY + chartH - ((torques[i] - tMin) / (tMax - tMin || 1)) * chartH;
+      doc.line(x1, y1, x2, y2);
+    }
+    // event ref line
+    if (caseData.depth_ft >= dMin && caseData.depth_ft <= dMax) {
+      const ex = chartX + ((caseData.depth_ft - dMin) / (dMax - dMin || 1)) * chartW;
+      doc.setDrawColor(255, 59, 48);
+      doc.setLineDashPattern([3, 3], 0);
+      doc.line(ex, chartY, ex, chartY + chartH);
+      doc.setLineDashPattern([], 0);
+      doc.setFontSize(8);
+      doc.setTextColor(255, 59, 48);
+      doc.text("EVENT", ex + 3, chartY + 10);
+    }
+    doc.setLineWidth(0.5);
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Torque: ${tMin.toFixed(1)} – ${tMax.toFixed(1)} kft·lbs`, chartX, chartY + chartH + 12);
+    doc.text(`Depth: ${dMin.toFixed(0)} – ${dMax.toFixed(0)} ft`, chartX + chartW - 120, chartY + chartH + 12);
+  }
+  y = chartY + chartH + 30;
+
+  // Timeline
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.text("Evidence Timeline", 40, y);
+  y += 15;
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  const sorted = [...evidence].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  sorted.forEach(e => {
+    if (y > 720) { doc.addPage(); y = 50; }
+    doc.setTextColor(255, 176, 0);
+    doc.setFont("helvetica", "bold");
+    doc.text(`◆ ${e.type.replace("_", " ").toUpperCase()}`, 40, y);
+    doc.setTextColor(120, 120, 120);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(`${new Date(e.timestamp).toLocaleString()} · ${e.author} · conf ${(e.confidence * 100).toFixed(0)}%`, 200, y);
+    y += 12;
+    doc.setTextColor(40, 40, 40);
+    doc.setFontSize(9);
+    const lines = doc.splitTextToSize(e.content, W - 80);
+    doc.text(lines, 55, y);
+    y += lines.length * 11;
+    if (e.conflict) {
+      doc.setTextColor(255, 59, 48);
+      doc.setFontSize(8);
+      doc.text(`⚠ CONFLICT: ${e.conflict.reason}`, 55, y);
+      y += 12;
+    }
+    y += 6;
+  });
+
+  // Action / Lessons
+  if (y > 650) { doc.addPage(); y = 50; }
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.text("Action Taken", 40, y); y += 14;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
+  const actLines = doc.splitTextToSize(caseData.action_taken || "—", W - 80);
+  doc.text(actLines, 40, y); y += actLines.length * 12 + 12;
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(0, 0, 0);
+  doc.text("Lessons Learned", 40, y); y += 14;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.setTextColor(40, 40, 40);
+  const lesLines = doc.splitTextToSize(caseData.lessons || "—", W - 80);
+  doc.text(lesLines, 40, y); y += lesLines.length * 12;
+
+  // Footer
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(150, 150, 150);
+    doc.text(`RigRecall · Confidential · Page ${i}/${pages}`, W / 2, 792 - 20, { align: "center" });
+  }
+
+  doc.save(`${caseData.id}_report.pdf`);
+}
 
 export default function CaseDetail() {
   const { id } = useParams();
@@ -21,7 +181,17 @@ export default function CaseDetail() {
 
   return (
     <Layout title={caseData.id} subtitle={`${caseData.well_name} · ${caseData.formation} @ ${caseData.depth_ft.toLocaleString()} ft`}
-      actions={<Link to="/cases" className="btn-ghost" data-testid="back-to-cases"><ArrowLeftIcon size={12} weight="bold" className="inline mr-1" />BACK</Link>}>
+      actions={
+        <div className="flex gap-2">
+          <button
+            onClick={() => { generatePdf(caseData, evidence, trace); toast.success("Report downloaded"); }}
+            className="btn-amber"
+            data-testid="download-pdf">
+            <DownloadSimpleIcon size={12} weight="bold" className="inline mr-1" /> PDF REPORT
+          </button>
+          <Link to="/cases" className="btn-ghost" data-testid="back-to-cases"><ArrowLeftIcon size={12} weight="bold" className="inline mr-1" />BACK</Link>
+        </div>
+      }>
 
       {/* Summary strip */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-leaflet";
 import { Link } from "react-router-dom";
 import Layout from "@/components/Layout";
+import LiveTicker from "@/components/LiveTicker";
 import { fetchKPIs, fetchWells, fetchCases } from "@/lib/api";
 import { ArrowRightIcon, DropIcon, WarningIcon, ClockCounterClockwiseIcon, CurrencyDollarIcon, GitDiffIcon, ChartLineIcon } from "@phosphor-icons/react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as ReTooltip, CartesianGrid } from "recharts";
@@ -46,6 +47,11 @@ export default function Dashboard() {
         </Link>
       }
     >
+      {/* Live rig telemetry ticker */}
+      <div className="mb-4">
+        <LiveTicker />
+      </div>
+
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" data-testid="kpi-grid">
         <KpiCard label="ACTIVE WELLS" value={kpis?.active_wells ?? "—"} sub={`${kpis?.total_wells ?? "—"} tracked total`} icon={DropIcon} testId="kpi-active-wells" />

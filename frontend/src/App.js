@@ -10,6 +10,8 @@ import RecallEngine from "@/pages/RecallEngine";
 import EvidenceViewer from "@/pages/EvidenceViewer";
 import ConflictDetection from "@/pages/ConflictDetection";
 import Assistant from "@/pages/Assistant";
+import CaseUpload from "@/pages/CaseUpload";
+import Alerts from "@/pages/Alerts";
 
 function App() {
   return (
@@ -22,6 +24,8 @@ function App() {
           <Route path="/recall" element={<RecallEngine />} />
           <Route path="/evidence" element={<EvidenceViewer />} />
           <Route path="/conflicts" element={<ConflictDetection />} />
+          <Route path="/upload" element={<CaseUpload />} />
+          <Route path="/alerts" element={<Alerts />} />
           <Route path="/assistant" element={<Assistant />} />
         </Routes>
       </BrowserRouter>

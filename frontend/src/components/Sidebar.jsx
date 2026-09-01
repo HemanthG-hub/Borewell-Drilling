@@ -1,6 +1,6 @@
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { GaugeIcon, StackIcon, MagnifyingGlassIcon, FileTextIcon, WarningOctagonIcon, ChatCenteredDotsIcon, HardHatIcon } from "@phosphor-icons/react";
+import { GaugeIcon, StackIcon, MagnifyingGlassIcon, FileTextIcon, WarningOctagonIcon, ChatCenteredDotsIcon, HardHatIcon, UploadSimpleIcon, BellRingingIcon } from "@phosphor-icons/react";
 
 const items = [
   { to: "/", label: "Dashboard", icon: GaugeIcon, testId: "nav-dashboard" },
@@ -8,6 +8,8 @@ const items = [
   { to: "/recall", label: "Recall Engine", icon: MagnifyingGlassIcon, testId: "nav-recall" },
   { to: "/evidence", label: "Evidence Viewer", icon: FileTextIcon, testId: "nav-evidence" },
   { to: "/conflicts", label: "Conflict Detection", icon: WarningOctagonIcon, testId: "nav-conflicts" },
+  { to: "/upload", label: "Case Upload", icon: UploadSimpleIcon, testId: "nav-upload" },
+  { to: "/alerts", label: "Alert Rules", icon: BellRingingIcon, testId: "nav-alerts" },
   { to: "/assistant", label: "AI Assistant", icon: ChatCenteredDotsIcon, testId: "nav-assistant" },
 ];
 

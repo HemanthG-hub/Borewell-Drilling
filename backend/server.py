@@ -156,8 +156,9 @@ async def get_well(well_id: str):
 
 
 @api_router.get("/cases")
-async def get_cases(event_type: Optional[str] = None, well_id: Optional[str] = None):
-    result = CASES
+async def get_cases(event_type: Optional[str] = None, well_id: Optional[str] = None, include_uploaded: bool = True):
+    pool = list(CASES) + (list(UPLOADED_CASES) if include_uploaded else [])
+    result = pool
     if event_type:
         result = [c for c in result if c["event_type"] == event_type]
     if well_id:
@@ -167,7 +168,7 @@ async def get_cases(event_type: Optional[str] = None, well_id: Optional[str] = N
 
 @api_router.get("/cases/{case_id}")
 async def get_case(case_id: str):
-    for c in CASES:
+    for c in CASES + UPLOADED_CASES:
         if c["id"] == case_id:
             return c
     raise HTTPException(404, "Case not found")
@@ -178,6 +179,9 @@ async def get_sensor_trace(case_id: str):
     for c in CASES:
         if c["id"] == case_id:
             return {"case_id": case_id, "trace": build_sensor_trace(c)}
+    for c in UPLOADED_CASES:
+        if c["id"] == case_id:
+            return {"case_id": case_id, "trace": c.get("trace", [])}
     raise HTTPException(404, "Case not found")
 
 
@@ -278,10 +282,12 @@ async def get_live_event():
 
 @api_router.post("/recall")
 async def recall_similar(event: dict):
-    """Given a current drilling event, find top similar past cases with component breakdown."""
+    """Given a current drilling event, find top similar past cases with component breakdown.
+    Searches CASES (curated) + UPLOADED_CASES (user-ingested) → unified Experience Memory."""
     scored = []
-    for c in CASES:
-        if c["outcome"] == "in_progress":
+    pool = list(CASES) + list(UPLOADED_CASES)
+    for c in pool:
+        if c.get("outcome") == "in_progress":
             continue
         s = similarity_score(event, c)
         if s["score"] > 0:
@@ -290,11 +296,12 @@ async def recall_similar(event: dict):
                 "similarity": s["score"],
                 "reasons": s["reasons"],
                 "components": s["components"],
-                "what_worked": c["action_taken"],
-                "outcome": c["outcome"],
-                "time_lost_hrs": c["time_lost_hrs"],
-                "cost_impact_usd": c["cost_impact_usd"],
-                "lessons": c["lessons"],
+                "what_worked": c.get("action_taken") or "Not documented",
+                "outcome": c.get("outcome"),
+                "time_lost_hrs": c.get("time_lost_hrs", 0),
+                "cost_impact_usd": c.get("cost_impact_usd", 0),
+                "lessons": c.get("lessons") or "",
+                "source": "uploaded" if c.get("uploaded_at") else "curated",
             })
     scored.sort(key=lambda x: x["similarity"], reverse=True)
     top = scored[:5]
@@ -668,8 +675,8 @@ def _pipeline_summary(filename: str):
     ]
 
 
-def extract_dna_from_text(text: str, well_name: str, formation: str) -> dict:
-    """Rule-based extraction from narrative report text (mud logs, DDR)."""
+def _regex_extract_dna(text: str, well_name: str, formation: str) -> dict:
+    """Fallback rule-based extraction from narrative report text."""
     import re
     t = text
     tl = text.lower().replace(",", "")
@@ -697,23 +704,28 @@ def extract_dna_from_text(text: str, well_name: str, formation: str) -> dict:
         m = re.search(rf"[^.]*{kw}[^.]*\.", t, re.IGNORECASE)
         if m:
             action_snippets.append(m.group(0).strip())
-    action_taken = " ".join(action_snippets[:2]) or "Not specified in report"
+    action_taken = " ".join(action_snippets[:2]) or "Not documented"
 
-    outcome = "resolved" if any(w in tl for w in ["resolved", "freed", "restored", "recovered", "killed"]) else ("not_resolved" if any(w in tl for w in ["failed", "unable", "abandoned"]) else "unknown")
+    if any(w in tl for w in ["resolved", "freed", "restored", "recovered", "killed"]):
+        outcome = "resolved"
+    elif any(w in tl for w in ["failed", "unable", "abandoned"]):
+        outcome = "not_resolved"
+    else:
+        outcome = "unknown"
 
     lesson_m = re.search(r"(lesson[^:]{0,20}:.{5,300})", tl, re.IGNORECASE)
     if lesson_m:
         lesson = lesson_m.group(1).strip()
     else:
         cause_m = re.search(r"(?:cause|root cause|caused by)[^.]{5,300}\.", t, re.IGNORECASE)
-        lesson = cause_m.group(0).strip() if cause_m else ""
+        lesson = cause_m.group(0).strip() if cause_m else "Not documented"
 
     return {
         "context": {
             "well_name": well_name,
             "formation": formation,
-            "depth_ft": int(depth_m.group(1)) if depth_m else 0,
-            "conditions_note": f"Extracted from narrative ({len(text)} chars)",
+            "depth_ft": int(depth_m.group(1)) if depth_m else None,
+            "conditions_note": f"Rule-based extraction from {len(text)} char narrative",
         },
         "event_type": event_type,
         "severity": severity,
@@ -728,7 +740,76 @@ def extract_dna_from_text(text: str, well_name: str, formation: str) -> dict:
             "mud_weight_ppg": float(mw_m.group(1)) if mw_m else 0,
         },
         "confidence": 0.6,
+        "extractor": "regex_fallback",
     }
+
+
+async def _llm_extract_dna(text: str, well_name: str, formation: str, model_provider: str = "anthropic", model_name: str = "claude-sonnet-5") -> Optional[dict]:
+    """LLM-based structured extraction. Returns None if unavailable/failed."""
+    if not EMERGENT_LLM_KEY:
+        return None
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system_msg = (
+            "You are a drilling engineering data extractor. Extract a strict JSON Experience DNA record "
+            "from the given drilling report text. Output ONLY valid JSON — no prose, no code fences.\n\n"
+            "Schema:\n"
+            "{\n"
+            '  "context": {"well_name": str, "formation": str, "depth_ft": int|null, "conditions_note": str|null},\n'
+            '  "event_type": "stuck_pipe|kick|lost_circulation|vibration|unknown",\n'
+            '  "severity": "low|medium|high|critical",\n'
+            '  "symptoms": [str],\n'
+            '  "action_taken": str,   // "Not documented" if not in text\n'
+            '  "outcome": "resolved|not_resolved|partially_resolved|unknown",\n'
+            '  "lesson": str,          // "Not documented" if absent\n'
+            '  "depth_ft": int,\n'
+            '  "params": {"torque_kftlbs": float, "rop_ft_hr": float, "mud_weight_ppg": float}\n'
+            "}\n\n"
+            "Rules:\n"
+            "- Extract ONLY facts explicitly stated in the source. Never invent drilling values, causes, or recommendations.\n"
+            "- If a field is not in the source, use \"Not documented\" for strings or 0/null for numbers.\n"
+            "- Return raw JSON only. No markdown."
+        )
+
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"extract_{uuid.uuid4()}",
+            system_message=system_msg,
+        ).with_model(model_provider, model_name)
+
+        prompt = f"WELL_NAME: {well_name}\nFORMATION: {formation}\n\nSOURCE_TEXT:\n{text[:8000]}"
+
+        buf = ""
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                buf += ev.content
+            elif isinstance(ev, StreamDone):
+                break
+
+        # Strip code fences if the model added them despite instructions
+        cleaned = buf.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+        parsed = json.loads(cleaned)
+        parsed["confidence"] = 0.85
+        parsed["extractor"] = f"{model_provider}:{model_name}"
+        return parsed
+    except Exception as e:
+        logger.warning(f"LLM extraction failed, falling back to regex: {e}")
+        return None
+
+
+async def extract_dna_from_text(text: str, well_name: str, formation: str) -> dict:
+    """LLM-first, regex-fallback structured extractor. Configurable model via env."""
+    provider = os.environ.get("DNA_EXTRACT_PROVIDER", "anthropic")
+    model = os.environ.get("DNA_EXTRACT_MODEL", "claude-sonnet-5")
+    llm_result = await _llm_extract_dna(text, well_name, formation, provider, model)
+    if llm_result:
+        return llm_result
+    return _regex_extract_dna(text, well_name, formation)
 
 
 @api_router.get("/experience-dna/{case_id}")
@@ -860,7 +941,7 @@ async def upload_case(
             extracted_text = raw.decode("utf-8", errors="ignore")
         if not extracted_text.strip():
             raise HTTPException(400, "No text could be extracted")
-        extracted_dna = extract_dna_from_text(extracted_text, well_name, formation)
+        extracted_dna = await extract_dna_from_text(extracted_text, well_name, formation)
     else:
         raise HTTPException(400, "Supported: .las, .csv, .json, .pdf, .txt")
 
@@ -917,6 +998,12 @@ async def upload_case(
     }
     UPLOADED_CASES.append(case)
 
+    # Persist to MongoDB so uploads survive refresh/restart
+    try:
+        await db.uploaded_cases.replace_one({"id": case["id"]}, case, upsert=True)
+    except Exception as e:
+        logger.warning(f"MongoDB persist failed for {case['id']}: {e}")
+
     fired = evaluate_alerts({
         "torque_kftlbs": max_torque,
         "rop_ft_hr": min_rop,
@@ -934,6 +1021,18 @@ async def get_uploaded(case_id: str):
         if c["id"] == case_id:
             return c
     raise HTTPException(404, "Uploaded case not found")
+
+
+@api_router.delete("/uploads/{case_id}")
+async def delete_uploaded(case_id: str):
+    global UPLOADED_CASES
+    before = len(UPLOADED_CASES)
+    UPLOADED_CASES = [c for c in UPLOADED_CASES if c["id"] != case_id]
+    try:
+        await db.uploaded_cases.delete_one({"id": case_id})
+    except Exception as e:
+        logger.warning(f"MongoDB delete failed for {case_id}: {e}")
+    return {"deleted": before - len(UPLOADED_CASES)}
 
 
 # ==================== LIVE RIG FEED (WebSocket) ====================
@@ -1020,6 +1119,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def load_persisted_cases():
+    """Rehydrate UPLOADED_CASES from MongoDB on boot."""
+    try:
+        docs = await db.uploaded_cases.find({}, {"_id": 0}).to_list(1000)
+        UPLOADED_CASES.extend(docs)
+        logger.info(f"Loaded {len(docs)} uploaded cases from MongoDB")
+    except Exception as e:
+        logger.warning(f"Could not load persisted uploads: {e}")
 
 
 @app.on_event("shutdown")

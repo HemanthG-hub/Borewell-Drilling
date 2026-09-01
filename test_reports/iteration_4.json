@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 4 testing: LLM DNA extraction (Claude Sonnet 5), upload→recall integration, MongoDB persistence, Presentation Mode 8-step walkthrough. Backend 11/11 pass, Frontend all critical flows pass. LLM extractor confirmed active (extractor='anthropic:claude-sonnet-5', confidence 0.85), uploaded cases persist to Mongo and appear in /api/cases, /api/recall, and UI /recall similar experiences.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CaseUpload dna-result panel", "issue": "Hardcoded caption reads 'Rule-based extraction — review before trusting' even when the actual extractor is LLM (extractor='anthropic:claude-sonnet-5'). Misleading — should read the extractor field from extracted_dna and display LLM/regex accordingly.", "selector": "[data-testid='dna-result']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration_4.py", "/app/test_reports/pytest/iter4_results.xml"],
+  "action_items": [
+    "(Optional/LOW) Fix hardcoded 'Rule-based extraction' caption in CaseUpload.jsx dna-result panel — display extractor-aware text (e.g., show extracted_dna.extractor value)."
+  ],
+  "critical_code_review_comments": [
+    "server.py file is 1138 lines — recommend splitting into modules (routes/, extractors/, hub/) for maintainability.",
+    "@app.on_event('startup'/'shutdown') is deprecated in FastAPI — recommend migrating to lifespan context manager.",
+    "UPLOADED_CASES global list combined with Mongo persistence is fine but not process-safe; multi-worker deployment could cause divergence. Consider always reading from Mongo.",
+    "LLM extraction has no timeout on stream_message — a hung LLM stream would block the upload request. Consider asyncio.wait_for with a bound.",
+    "extract_dna_from_text uses text[:8000] truncation — silent; consider surfacing 'truncated' flag in DNA output."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration_4.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all Presentation Mode + Upload/Recall integration checks pass)"},
+  "test_credentials": "N/A (no auth in app)",
+  "seed_data_creation": "Test creates and cleans up ephemeral UPLOAD- cases via /api/uploads and DELETE /api/uploads/{id}.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test suite at /app/backend/tests/test_iteration_4.py covers LLM extraction, Mongo persistence, /api/cases integration, recall integration and DELETE. It requires EMERGENT_LLM_KEY set (uses ~60s LLM call). Frontend Presentation Mode is stable — start-demo-btn navigates through 8 steps with proper URL query params (?demo=1&step=N), deep-linking works, outro modal + close/exit clean URL. Uploaded cases with UPLOAD- prefix are visible in /recall similarity radar and matches list."
+}

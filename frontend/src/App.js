@@ -14,6 +14,7 @@ import CaseUpload from "@/pages/CaseUpload";
 import Alerts from "@/pages/Alerts";
 import WhatWorkedBefore from "@/pages/WhatWorkedBefore";
 import ExperienceDnaPage from "@/pages/ExperienceDnaPage";
+import PresentationMode from "@/components/PresentationMode";
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/assistant" element={<Assistant />} />
         </Routes>
+        <PresentationMode />
       </BrowserRouter>
       <Toaster theme="dark" position="top-right" />
     </div>

@@ -30,7 +30,7 @@ export default function CaseUpload() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setResult(data);
-      toast.success(`Case ${data.case.id} ingested (${data.case.row_count} rows)`);
+      toast.success(`Case ${data.case.id} ingested — now searchable in Recall Engine`);
       refresh();
     } catch (e) {
       toast.error("Upload failed: " + e.message);
@@ -125,7 +125,9 @@ export default function CaseUpload() {
                     <div><span className="text-[#71717A]">OUTCOME:</span> <span className={result.case.extracted_dna.outcome === "resolved" ? "text-[#34C759]" : "text-[#FFB000]"}>{result.case.extracted_dna.outcome}</span></div>
                     <div className="col-span-2"><span className="text-[#71717A]">LESSON:</span> <span className="italic">{result.case.extracted_dna.lesson || "Not extracted"}</span></div>
                   </div>
-                  <div className="mt-3 text-[10px] text-[#FFB000] font-mono">Confidence: {(result.case.extracted_dna.confidence * 100).toFixed(0)}% · Rule-based extraction — review before trusting</div>
+                  <div className="mt-3 text-[10px] text-[#FFB000] font-mono">
+                    Extractor: <span className="text-white">{result.case.extracted_dna.extractor || "regex_fallback"}</span> · Confidence: {(result.case.extracted_dna.confidence * 100).toFixed(0)}% · {result.case.extracted_dna.extractor?.startsWith("regex") ? "Rule-based extraction — review before trusting" : "LLM extraction — review before trusting"}
+                  </div>
                 </div>
               )}
 
@@ -133,6 +135,9 @@ export default function CaseUpload() {
                 <div className="flex items-center gap-2 mb-2">
                   <CheckCircleIcon size={18} weight="fill" className="text-[#34C759]" />
                   <div className="font-display font-bold text-sm tracking-widest">INGESTED · {result.case.id}</div>
+                </div>
+                <div className="text-[11px] text-[#34C759] mb-3 font-mono">
+                  ▸ SAVED TO EXPERIENCE MEMORY · NOW SEARCHABLE IN RECALL ENGINE
                 </div>
                 <div className="grid grid-cols-4 gap-3 text-xs font-mono mb-3">
                   <div><span className="text-[#71717A]">EVENT:</span> {result.case.event_type}</div>

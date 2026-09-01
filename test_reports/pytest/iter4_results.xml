@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="11" time="70.707" timestamp="2026-09-01T12:44:53.030584+00:00" hostname="agent-env-322ded33-8436-4a98-ab4a-cea10d0bbc00"><testcase classname="test_iteration_4.TestLLMExtraction" name="test_llm_extractor_used" time="8.461" /><testcase classname="test_iteration_4.TestLLMExtraction" name="test_llm_extracted_fields" time="0.000" /><testcase classname="test_iteration_4.TestPersistence" name="test_upload_appears_in_uploads_list" time="0.297" /><testcase classname="test_iteration_4.TestPersistence" name="test_upload_appears_in_cases_list" time="0.169" /><testcase classname="test_iteration_4.TestPersistence" name="test_cases_exclude_uploaded_when_flag_false" time="0.134" /><testcase classname="test_iteration_4.TestPersistence" name="test_get_case_by_id_for_uploaded" time="0.221" /><testcase classname="test_iteration_4.TestPersistence" name="test_sensor_trace_for_uploaded" time="0.197" /><testcase classname="test_iteration_4.TestPersistence" name="test_experience_dna_for_uploaded" time="0.151" /><testcase classname="test_iteration_4.TestPersistence" name="test_persistence_in_mongo" time="0.092" /><testcase classname="test_iteration_4.TestRecallIntegration" name="test_uploaded_case_appears_in_recall" time="0.246" /><testcase classname="test_iteration_4.TestDelete" name="test_delete_uploaded" time="60.502"><failure message="requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='rig-recall.preview.emergentagent.com', port=443): Read timed out. (read timeout=60)">/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:534: in _make_request
+    response = conn.getresponse()
+               ^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:571: in getresponse
+    httplib_response = super().getresponse()
+                       ^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/http/client.py:1443: in getresponse
+    response.begin()
+/usr/local/lib/python3.11/http/client.py:337: in begin
+    version, status, reason = self._read_status()
+                              ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/http/client.py:298: in _read_status
+    line = str(self.fp.readline(_MAXLINE + 1), "iso-8859-1")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/socket.py:718: in readinto
+    return self._sock.recv_into(b)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1314: in recv_into
+    return self.read(nbytes, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/ssl.py:1166: in read
+    return self._sslobj.read(len, buffer)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TimeoutError: The read operation timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:842: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:498: in increment
+    raise reraise(type(error), error, _stacktrace)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/util/util.py:39: in reraise
+    raise value
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:788: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:536: in _make_request
+    self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:367: in _raise_timeout
+    raise ReadTimeoutError(
+E   urllib3.exceptions.ReadTimeoutError: HTTPSConnectionPool(host='rig-recall.preview.emergentagent.com', port=443): Read timed out. (read timeout=60)
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_iteration_4.py:145: in test_delete_uploaded
+    r = requests.post(f"{API}/uploads", files=files,
+/root/.venv/lib/python3.11/site-packages/requests/api.py:134: in post
+    return request("post", url, data=data, json=json, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:71: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:742: in send
+    raise ReadTimeout(e, request=request)
+E   requests.exceptions.ReadTimeout: HTTPSConnectionPool(host='rig-recall.preview.emergentagent.com', port=443): Read timed out. (read timeout=60)</failure></testcase></testsuite></testsuites>

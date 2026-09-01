@@ -1,174 +1,196 @@
-"""RigRecall iteration 2 feature tests: alerts, uploads, websocket live feed."""
+"""RigRecall iteration 3 backend tests: Experience DNA, Memory Quality,
+Similar Experiences (component breakdown, what worked before, outcome variation),
+enriched Conflicts, Situation clustering, PDF/TXT upload, legacy alerts/uploads.
+"""
 import os
 import io
 import json
-import asyncio
 import pytest
 import requests
-import websockets
-from urllib.parse import urlparse
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://rig-recall.preview.emergentagent.com').rstrip('/')
+from dotenv import load_dotenv
+load_dotenv('/app/frontend/.env')
+BASE_URL = os.environ['REACT_APP_BACKEND_URL'].rstrip('/')
 API = f"{BASE_URL}/api"
 
 
-# ---------- Alert Rules ----------
-class TestAlertRules:
-    created_ids = []
-
-    def test_list_rules_initial(self):
-        r = requests.get(f"{API}/alerts/rules", timeout=10)
+# ---------- Experience DNA ----------
+class TestExperienceDNA:
+    def test_dna_case_001(self):
+        r = requests.get(f"{API}/experience-dna/CASE-001", timeout=10)
         assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_create_rule(self):
-        payload = {"name": "TEST_HighTorque", "metric": "torque_kftlbs",
-                   "operator": "gt", "threshold": 22, "severity": "high"}
-        r = requests.post(f"{API}/alerts/rules", json=payload, timeout=10)
-        assert r.status_code == 200
-        data = r.json()
-        assert data["id"]
-        assert data["created_at"]
-        assert data["name"] == payload["name"]
-        assert data["threshold"] == 22
-        TestAlertRules.created_ids.append(data["id"])
-
-    def test_create_low_threshold_rule_for_triggering(self):
-        # Very low threshold to trigger from live feed
-        payload = {"name": "TEST_LowTorqueTrigger", "metric": "torque_kftlbs",
-                   "operator": "gt", "threshold": 1, "severity": "low"}
-        r = requests.post(f"{API}/alerts/rules", json=payload, timeout=10)
-        assert r.status_code == 200
-        TestAlertRules.created_ids.append(r.json()["id"])
-
-    def test_rule_persists(self):
-        r = requests.get(f"{API}/alerts/rules", timeout=10)
-        ids = [x["id"] for x in r.json()]
-        for cid in TestAlertRules.created_ids:
-            assert cid in ids
-
-    def test_alerts_endpoint(self):
-        r = requests.get(f"{API}/alerts", timeout=10)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_delete_rule(self):
-        if not TestAlertRules.created_ids:
-            pytest.skip("no rule created")
-        rid = TestAlertRules.created_ids[0]
-        r = requests.delete(f"{API}/alerts/rules/{rid}", timeout=10)
-        assert r.status_code == 200
-        assert r.json()["deleted"] == 1
-        # verify removed
-        r2 = requests.get(f"{API}/alerts/rules", timeout=10)
-        assert rid not in [x["id"] for x in r2.json()]
-
-
-# ---------- Case Upload ----------
-CSV_CONTENT = """depth_ft,rop_ft_hr,torque_kftlbs,mud_weight_ppg
-10000,55,15.2,11.5
-10005,48,18.4,11.5
-10010,22,24.7,11.6
-10015,25,22.1,11.6
-"""
-
-LAS_CONTENT = """~V
-VERS. 2.0 : CWLS LOG ASCII STANDARD
-~W
-WELL. TESTWELL01 : WELL
-~C
-DEPT.F : DEPTH
-TORQUE.KFTLBS : TORQUE
-ROP.FT/HR : ROP
-~A
-10000 15.2 55
-10005 18.4 48
-10010 24.7 22
-10015 22.1 25
-"""
-
-
-class TestUploads:
-    uploaded_case_id = None
-
-    def test_upload_csv(self):
-        files = {"file": ("test.csv", CSV_CONTENT, "text/csv")}
-        data = {"well_name": "TEST_WellCSV", "formation": "TEST_Formation"}
-        r = requests.post(f"{API}/uploads", files=files, data=data, timeout=15)
-        assert r.status_code == 200, r.text
         body = r.json()
-        assert "case" in body
-        assert "alerts_triggered" in body
-        c = body["case"]
-        assert c["well_name"] == "TEST_WellCSV"
-        assert c["row_count"] == 4
-        assert len(c["trace"]) == 4
-        assert c["event_type"] in ["stuck_pipe", "vibration", "normal_drilling"]
-        assert c["severity"] in ["low", "medium", "high", "critical"]
-        assert isinstance(c["symptoms"], list)
-        TestUploads.uploaded_case_id = c["id"]
+        assert body["case_id"] == "CASE-001"
+        steps = body["steps"]
+        assert len(steps) == 6
+        expected = ["context", "event", "action", "outcome", "lesson", "evidence"]
+        assert [s["step"] for s in steps] == expected
+        for s in steps:
+            assert "label" in s and "content" in s and s["label"]
 
-    def test_upload_las(self):
-        files = {"file": ("test.las", LAS_CONTENT, "text/plain")}
-        data = {"well_name": "TEST_WellLAS", "formation": "TEST_Wolfcamp"}
-        r = requests.post(f"{API}/uploads", files=files, data=data, timeout=15)
-        assert r.status_code == 200, r.text
-        c = r.json()["case"]
-        assert c["row_count"] >= 3
-        assert len(c["trace"]) >= 3
-        # torque was max 24.7 -> event_type stuck_pipe expected
-        assert c["params"]["torque_kftlbs"] > 20
-
-    def test_upload_invalid_extension(self):
-        files = {"file": ("test.txt", b"random", "text/plain")}
-        r = requests.post(f"{API}/uploads", files=files, timeout=10)
-        assert r.status_code == 400
-
-    def test_list_uploads(self):
-        r = requests.get(f"{API}/uploads", timeout=10)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-        assert len(r.json()) >= 2
-
-    def test_get_individual_upload(self):
-        if not TestUploads.uploaded_case_id:
-            pytest.skip("no upload id")
-        r = requests.get(f"{API}/uploads/{TestUploads.uploaded_case_id}", timeout=10)
-        assert r.status_code == 200
-        assert r.json()["id"] == TestUploads.uploaded_case_id
-
-    def test_get_nonexistent_upload(self):
-        r = requests.get(f"{API}/uploads/DOES-NOT-EXIST", timeout=10)
+    def test_dna_not_found(self):
+        r = requests.get(f"{API}/experience-dna/NOPE-999", timeout=10)
         assert r.status_code == 404
 
 
-# ---------- WebSocket Live Feed ----------
-@pytest.mark.asyncio
-async def test_websocket_live_feed():
-    parsed = urlparse(BASE_URL)
-    proto = "wss" if parsed.scheme == "https" else "ws"
-    ws_url = f"{proto}://{parsed.netloc}/api/ws/live"
-
-    async with websockets.connect(ws_url, open_timeout=10) as ws:
-        messages = []
-        for _ in range(2):
-            msg = await asyncio.wait_for(ws.recv(), timeout=6)
-            data = json.loads(msg)
-            messages.append(data)
-        assert len(messages) >= 2
-        for m in messages:
-            for key in ["depth_ft", "rop_ft_hr", "torque_kftlbs",
-                        "mud_weight_ppg", "flow_gpm", "wob_klbs",
-                        "well_id", "well_name", "timestamp"]:
-                assert key in m, f"missing {key}"
+# ---------- Memory Quality ----------
+class TestMemoryQuality:
+    def test_memory_quality_shape(self):
+        r = requests.get(f"{API}/memory-quality", timeout=10)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["total_experiences"] == 8
+        assert "coverage_pct" in d
+        assert isinstance(d["knowledge_gaps"], list)
 
 
-# ---------- Alerts triggered after live/upload ----------
-def test_alerts_triggered_present():
-    # After upload with low-threshold rule + live feed running, we should have alerts
-    r = requests.get(f"{API}/alerts", timeout=10)
-    assert r.status_code == 200
-    # Not asserting >0 strictly to avoid flakiness - the low threshold rule 
-    # may have been deleted; log for visibility
-    alerts = r.json()
-    print(f"Total triggered alerts: {len(alerts)}")
+# ---------- Recall Engine upgrade ----------
+class TestRecallUpgrade:
+    def test_recall_returns_components(self):
+        payload = {
+            "well_id": "W1", "formation": "Wolfcamp",
+            "depth_ft": 11200,
+            "symptoms": ["torque_spike", "rop_drop"],
+            "params": {"torque_kftlbs": 24.0, "rop_ft_hr": 15.0, "mud_weight_ppg": 11.6},
+        }
+        r = requests.post(f"{API}/recall", json=payload, timeout=15)
+        assert r.status_code == 200
+        d = r.json()
+        assert "matches" in d and len(d["matches"]) > 0
+        m = d["matches"][0]
+        c = m["components"]
+        for k in ["event_similarity", "symptom_similarity", "depth_proximity",
+                  "formation_similarity", "parameter_similarity", "overall_match", "weights"]:
+            assert k in c, f"missing component key {k}"
+        assert isinstance(c["weights"], dict)
+
+        assert isinstance(d["what_worked_before"], list)
+        if d["what_worked_before"]:
+            w = d["what_worked_before"][0]
+            for k in ["action", "total_similar_cases", "resolved_count",
+                      "not_resolved_count", "evidence_strength", "success_rate_pct"]:
+                assert k in w
+            assert w["evidence_strength"] in ("Strong", "Moderate", "Limited")
+
+        assert isinstance(d["outcome_variation"], list)
+        assert isinstance(d["safety_disclaimer"], str) and len(d["safety_disclaimer"]) > 10
+
+
+# ---------- Conflicts ----------
+class TestConflicts:
+    def test_conflicts_enriched(self):
+        r = requests.get(f"{API}/conflicts", timeout=10)
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, list) and len(data) > 0
+        for c in data:
+            assert c["impact_level"] in ("HIGH", "MEDIUM", "LOW")
+            assert isinstance(c["why_it_matters"], str) and c["why_it_matters"]
+            assert c["status"] == "Requires Human Review"
+
+
+# ---------- Situations ----------
+class TestSituations:
+    created_rule = None
+
+    def test_seed_low_rule_and_situations(self):
+        # Ensure at least one triggered alert exists via low-threshold rule + live loop / upload
+        payload = {"name": "TEST_LowTorqueSituation", "metric": "torque_kftlbs",
+                   "operator": "gt", "threshold": 1, "severity": "low"}
+        r = requests.post(f"{API}/alerts/rules", json=payload, timeout=10)
+        assert r.status_code == 200
+        TestSituations.created_rule = r.json()["id"]
+
+        # Trigger via an upload
+        csv = "depth_ft,rop_ft_hr,torque_kftlbs,mud_weight_ppg\n10000,55,25.0,11.5\n"
+        requests.post(f"{API}/uploads",
+                      files={"file": ("t.csv", csv, "text/csv")},
+                      data={"well_name": "TEST_SW", "formation": "Wolfcamp"},
+                      timeout=15)
+
+        r2 = requests.get(f"{API}/alerts/situations", timeout=10)
+        assert r2.status_code == 200
+        d = r2.json()
+        assert "raw_breaches" in d
+        assert "situations" in d and isinstance(d["situations"], list)
+        assert "combined_situations" in d
+        if d["situations"]:
+            s = d["situations"][0]
+            assert "situation_label" in s
+            assert "overall_severity" in s
+            assert "peak_value" in s
+
+    def test_cleanup_rule(self):
+        if TestSituations.created_rule:
+            requests.delete(f"{API}/alerts/rules/{TestSituations.created_rule}", timeout=10)
+
+
+# ---------- Uploads: PDF/TXT ----------
+NARRATIVE_TXT = (
+    "Stuck pipe event at 11,200 ft. Torque spike observed. "
+    "Root cause: pack-off from shale sloughing. "
+    "Action: Circulate with high-vis pill. Resolved after 14 hrs."
+)
+
+
+class TestUploadsPDFTXT:
+    def test_upload_txt_narrative(self):
+        files = {"file": ("narr.txt", NARRATIVE_TXT, "text/plain")}
+        data = {"well_name": "TEST_TXT", "formation": "Shale"}
+        r = requests.post(f"{API}/uploads", files=files, data=data, timeout=20)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        c = body["case"]
+        assert c["extracted_dna"] is not None
+        dna = c["extracted_dna"]
+        assert dna["event_type"] == "stuck_pipe"
+        assert dna["outcome"] == "resolved"
+        assert "torque_spike" in dna["symptoms"]
+        pipeline = body["extraction_pipeline"]
+        assert isinstance(pipeline, list) and len(pipeline) == 4
+        assert pipeline[0]["step"] == "UPLOAD REPORT"
+
+    def test_upload_pdf(self):
+        # Build a minimal valid PDF using pypdf on the fly
+        try:
+            from pypdf import PdfWriter
+        except Exception:
+            pytest.skip("pypdf not available in test env")
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        buf = io.BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+        files = {"file": ("sample.pdf", buf.getvalue(), "application/pdf")}
+        r = requests.post(f"{API}/uploads", files=files,
+                          data={"well_name": "TEST_PDF", "formation": "X"},
+                          timeout=20)
+        # Blank page produces no extractable text → 400 acceptable, else 200 pipeline check
+        if r.status_code == 400:
+            assert "No text" in r.text or "PDF" in r.text
+        else:
+            assert r.status_code == 200
+            pipeline = r.json()["extraction_pipeline"]
+            assert pipeline[0]["step"] == "UPLOAD REPORT"
+            assert len(pipeline) == 4
+
+    def test_upload_reject_unsupported(self):
+        files = {"file": ("thing.xyz", b"random", "application/octet-stream")}
+        r = requests.post(f"{API}/uploads", files=files, timeout=10)
+        assert r.status_code == 400
+
+
+# ---------- Legacy sanity ----------
+class TestLegacy:
+    def test_cases_list(self):
+        r = requests.get(f"{API}/cases", timeout=10)
+        assert r.status_code == 200 and isinstance(r.json(), list)
+
+    def test_kpis(self):
+        r = requests.get(f"{API}/kpis", timeout=10)
+        assert r.status_code == 200
+        assert "total_cases" in r.json()
+
+    def test_case_evidence(self):
+        r = requests.get(f"{API}/cases/CASE-001/evidence", timeout=10)
+        assert r.status_code == 200

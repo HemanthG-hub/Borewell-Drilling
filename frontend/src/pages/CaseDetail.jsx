@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import Layout from "@/components/Layout";
-import { fetchCase, fetchSensorTrace, fetchCaseEvidence } from "@/lib/api";
+import ExperienceDnaFlow from "@/components/ExperienceDnaFlow";
+import { fetchCase, fetchSensorTrace, fetchCaseEvidence, fetchExperienceDna } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { ArrowLeftIcon, FileTextIcon, WarningOctagonIcon, LightbulbFilamentIcon, DownloadSimpleIcon } from "@phosphor-icons/react";
 import jsPDF from "jspdf";
@@ -170,11 +171,13 @@ export default function CaseDetail() {
   const [caseData, setCaseData] = useState(null);
   const [trace, setTrace] = useState([]);
   const [evidence, setEvidence] = useState([]);
+  const [dna, setDna] = useState(null);
 
   useEffect(() => {
     fetchCase(id).then(setCaseData);
     fetchSensorTrace(id).then(d => setTrace(d.trace));
     fetchCaseEvidence(id).then(setEvidence);
+    fetchExperienceDna(id).then(setDna);
   }, [id]);
 
   if (!caseData) return <Layout title="Loading..." />;
@@ -192,6 +195,9 @@ export default function CaseDetail() {
           <Link to="/cases" className="btn-ghost" data-testid="back-to-cases"><ArrowLeftIcon size={12} weight="bold" className="inline mr-1" />BACK</Link>
         </div>
       }>
+
+      {/* Experience DNA - primary innovation */}
+      {dna && <div className="mb-6"><ExperienceDnaFlow dna={dna} /></div>}
 
       {/* Summary strip */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">

@@ -12,6 +12,8 @@ import ConflictDetection from "@/pages/ConflictDetection";
 import Assistant from "@/pages/Assistant";
 import CaseUpload from "@/pages/CaseUpload";
 import Alerts from "@/pages/Alerts";
+import WhatWorkedBefore from "@/pages/WhatWorkedBefore";
+import ExperienceDnaPage from "@/pages/ExperienceDnaPage";
 
 function App() {
   return (
@@ -22,6 +24,8 @@ function App() {
           <Route path="/cases" element={<CaseLibrary />} />
           <Route path="/cases/:id" element={<CaseDetail />} />
           <Route path="/recall" element={<RecallEngine />} />
+          <Route path="/what-worked" element={<WhatWorkedBefore />} />
+          <Route path="/dna" element={<ExperienceDnaPage />} />
           <Route path="/evidence" element={<EvidenceViewer />} />
           <Route path="/conflicts" element={<ConflictDetection />} />
           <Route path="/upload" element={<CaseUpload />} />

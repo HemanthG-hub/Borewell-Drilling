@@ -49,54 +49,91 @@ class ChatRequest(BaseModel):
 
 
 # ----------------------- Similarity -----------------------
-def similarity_score(new_event: dict, past_case: dict) -> dict:
-    """Simple weighted similarity: formation match + symptom overlap + parameter proximity."""
-    score = 0.0
-    reasons = []
+# ----------------------- Similarity (component breakdown) -----------------------
+def similarity_components(new_event: dict, past_case: dict) -> dict:
+    """Return per-component similarity 0-100 plus overall weighted score."""
+    comps = {}
 
-    # Formation match (25 pts)
-    if new_event.get("formation") == past_case.get("formation"):
-        score += 25
-        reasons.append(f"Same formation: {past_case['formation']}")
-    elif new_event.get("formation", "").split()[0] == past_case.get("formation", "").split()[0]:
-        score += 12
-        reasons.append(f"Similar formation family: {past_case.get('formation')}")
-
-    # Symptom overlap (up to 40 pts)
+    # Event / symptom similarity (0-100): Jaccard on symptoms
     ns = set(new_event.get("symptoms", []))
     ps = set(past_case.get("symptoms", []))
     if ns and ps:
-        overlap = len(ns & ps)
-        pct = overlap / max(len(ns), 1)
-        pts = pct * 40
-        score += pts
-        if overlap:
-            reasons.append(f"Shared symptoms ({overlap}): {', '.join(sorted(ns & ps))}")
+        inter = len(ns & ps)
+        union = len(ns | ps)
+        comps["event_similarity"] = round(100.0 if inter == len(ns) == len(ps) else 0, 0) if not (union) else round(inter / union * 100, 0)
+    else:
+        comps["event_similarity"] = 0
 
-    # Depth proximity (up to 15 pts)
+    # Symptom similarity — same as event (kept separate to match presentation spec)
+    if ns and ps:
+        overlap = len(ns & ps)
+        comps["symptom_similarity"] = round(overlap / max(len(ns), 1) * 100, 0)
+    else:
+        comps["symptom_similarity"] = 0
+
+    # Depth proximity 0-100 (exponential falloff)
     nd = new_event.get("depth_ft", 0)
     pd = past_case.get("depth_ft", 0)
     if nd and pd:
         diff = abs(nd - pd)
-        if diff < 500:
-            score += 15
-            reasons.append(f"Depth within 500 ft ({pd} vs {nd})")
-        elif diff < 1500:
-            score += 8
-            reasons.append(f"Depth within 1500 ft")
+        comps["depth_proximity"] = round(max(0, 100 - (diff / 30)), 0)  # 3000ft diff -> 0
+    else:
+        comps["depth_proximity"] = 0
 
-    # Parameter proximity (up to 20 pts): torque, rop, mud_weight
+    # Formation similarity
+    nf = new_event.get("formation", "") or ""
+    pf = past_case.get("formation", "") or ""
+    if nf == pf and nf:
+        comps["formation_similarity"] = 100
+    elif nf.split()[:1] == pf.split()[:1] and nf:
+        comps["formation_similarity"] = 60
+    else:
+        comps["formation_similarity"] = 0
+
+    # Parameter similarity
     np_ = new_event.get("params", {})
     pp = past_case.get("params", {})
-    param_hits = 0
-    for k, tol in [("torque_kftlbs", 4), ("rop_ft_hr", 15), ("mud_weight_ppg", 0.8)]:
-        if k in np_ and k in pp and abs(np_[k] - pp[k]) <= tol:
-            param_hits += 1
-    if param_hits:
-        score += (param_hits / 3) * 20
-        reasons.append(f"Drilling parameters within tolerance ({param_hits}/3)")
+    tolerances = [("torque_kftlbs", 6), ("rop_ft_hr", 20), ("mud_weight_ppg", 1.2)]
+    ratios = []
+    for k, tol in tolerances:
+        if k in np_ and k in pp:
+            diff = abs(np_[k] - pp[k])
+            ratios.append(max(0, 1 - diff / tol))
+    comps["parameter_similarity"] = round((sum(ratios) / len(ratios) * 100) if ratios else 0, 0)
 
-    return {"score": round(min(score, 100), 1), "reasons": reasons}
+    # Overall weighted (weights based on operational relevance)
+    weights = {
+        "event_similarity": 0.15,
+        "symptom_similarity": 0.30,
+        "depth_proximity": 0.15,
+        "formation_similarity": 0.20,
+        "parameter_similarity": 0.20,
+    }
+    overall = sum(comps[k] * w for k, w in weights.items())
+    comps["overall_match"] = round(overall, 0)
+    comps["weights"] = {k: int(v * 100) for k, v in weights.items()}
+    return comps
+
+
+def similarity_score(new_event: dict, past_case: dict) -> dict:
+    """Legacy wrapper — reasons list + score for existing recall route."""
+    comps = similarity_components(new_event, past_case)
+    reasons = []
+    if comps["formation_similarity"] >= 100:
+        reasons.append(f"Same formation: {past_case.get('formation')}")
+    elif comps["formation_similarity"] >= 60:
+        reasons.append(f"Similar formation family: {past_case.get('formation')}")
+    ns = set(new_event.get("symptoms", []))
+    ps = set(past_case.get("symptoms", []))
+    if ns & ps:
+        reasons.append(f"Shared symptoms: {', '.join(sorted(ns & ps))}")
+    if comps["depth_proximity"] >= 80:
+        reasons.append(f"Depth within tight tolerance")
+    elif comps["depth_proximity"] >= 50:
+        reasons.append(f"Depth within operational range")
+    if comps["parameter_similarity"] >= 60:
+        reasons.append(f"Drilling parameters converge")
+    return {"score": comps["overall_match"], "reasons": reasons, "components": comps}
 
 
 # ----------------------- Routes -----------------------
@@ -163,18 +200,75 @@ async def get_case_evidence(case_id: str):
 
 @api_router.get("/conflicts")
 async def get_conflicts():
-    """Return all evidence records with conflict flags."""
+    """Return all evidence records with conflict flags, enriched with impact + why-it-matters."""
     conflicts = []
+    IMPACT_RULES = {
+        "pit gain": ("HIGH", "Discrepancy in pit gain magnitude affects interpretation of well-control severity and the correct kill weight."),
+        "mechanism": ("MEDIUM", "Different mechanism attribution changes remediation strategy (mechanical vs differential sticking)."),
+        "spike": ("HIGH", "Signal shape disagreement (spike vs drift) changes urgency and recommended intervention window."),
+    }
+    def assess(reason: str):
+        rl = reason.lower()
+        for key, (impact, why) in IMPACT_RULES.items():
+            if key in rl:
+                return impact, why
+        return "MEDIUM", "Conflicting evidence may affect how the event is interpreted downstream."
+
     for eid, ev in EVIDENCE.items():
         if ev.get("conflict"):
             counter_ev = EVIDENCE.get(ev["conflict"]["with"])
+            impact, why = assess(ev["conflict"]["reason"])
             conflicts.append({
                 "case_id": ev["case_id"],
                 "evidence_a": ev,
                 "evidence_b": counter_ev,
                 "reason": ev["conflict"]["reason"],
+                "impact_level": impact,
+                "why_it_matters": why,
+                "status": "Requires Human Review",
             })
     return conflicts
+
+
+@api_router.get("/memory-quality")
+async def memory_quality():
+    """Organizational memory quality metrics + knowledge gaps."""
+    total = len(CASES)
+    with_action = sum(1 for c in CASES if c.get("action_taken") and c["action_taken"] != "Pending review")
+    with_outcome = sum(1 for c in CASES if c.get("outcome") in ("resolved", "not_resolved", "partially_resolved"))
+    with_evidence = sum(1 for c in CASES if c.get("evidence_refs"))
+    with_lessons = sum(1 for c in CASES if c.get("lessons"))
+    conflicts = sum(1 for e in EVIDENCE.values() if e.get("conflict"))
+    action_no_outcome = sum(1 for c in CASES if c.get("action_taken") and c["action_taken"] != "Pending review" and c["outcome"] not in ("resolved", "not_resolved", "partially_resolved"))
+    outcome_no_lesson = sum(1 for c in CASES if c["outcome"] == "resolved" and not c.get("lessons"))
+
+    gaps = []
+    if action_no_outcome > 0:
+        gaps.append({
+            "severity": "high",
+            "message": f"{action_no_outcome} historical events have documented actions but no recorded outcomes. These experiences cannot be confidently reused for learning."
+        })
+    if outcome_no_lesson > 0:
+        gaps.append({
+            "severity": "medium",
+            "message": f"{outcome_no_lesson} resolved cases lack a documented lesson. Recovery knowledge is trapped in the event log."
+        })
+    if conflicts > 0:
+        gaps.append({
+            "severity": "medium",
+            "message": f"{conflicts} evidence pairs contradict each other. Human review required before these experiences can be trusted."
+        })
+
+    return {
+        "total_experiences": total,
+        "with_documented_action": with_action,
+        "with_known_outcome": with_outcome,
+        "with_evidence": with_evidence,
+        "with_lessons": with_lessons,
+        "conflicting_records": conflicts,
+        "coverage_pct": round((with_action + with_outcome + with_evidence + with_lessons) / (total * 4) * 100, 0) if total else 0,
+        "knowledge_gaps": gaps,
+    }
 
 
 @api_router.get("/live-event")
@@ -184,7 +278,7 @@ async def get_live_event():
 
 @api_router.post("/recall")
 async def recall_similar(event: dict):
-    """Given a current drilling event, find top similar past cases + measure what worked."""
+    """Given a current drilling event, find top similar past cases with component breakdown."""
     scored = []
     for c in CASES:
         if c["outcome"] == "in_progress":
@@ -195,6 +289,7 @@ async def recall_similar(event: dict):
                 "case": c,
                 "similarity": s["score"],
                 "reasons": s["reasons"],
+                "components": s["components"],
                 "what_worked": c["action_taken"],
                 "outcome": c["outcome"],
                 "time_lost_hrs": c["time_lost_hrs"],
@@ -202,32 +297,94 @@ async def recall_similar(event: dict):
                 "lessons": c["lessons"],
             })
     scored.sort(key=lambda x: x["similarity"], reverse=True)
-
-    # Measure what worked: which action had best (lowest time+cost) outcomes across top matches
     top = scored[:5]
-    action_scores = {}
-    for match in top:
-        act = match["what_worked"]
-        if act not in action_scores:
-            action_scores[act] = {"count": 0, "avg_hrs": 0, "avg_cost": 0, "cases": []}
-        action_scores[act]["count"] += 1
-        action_scores[act]["avg_hrs"] += match["time_lost_hrs"]
-        action_scores[act]["avg_cost"] += match["cost_impact_usd"]
-        action_scores[act]["cases"].append(match["case"]["id"])
-    for act, data in action_scores.items():
-        data["avg_hrs"] = round(data["avg_hrs"] / data["count"], 1)
-        data["avg_cost"] = round(data["avg_cost"] / data["count"])
 
-    best_action = None
-    if action_scores:
-        best_action = min(action_scores.items(), key=lambda x: x[1]["avg_hrs"])
-        best_action = {"action": best_action[0], **best_action[1]}
+    # Aggregate actions across matches into "What Worked Before"
+    # Extract action families from action_taken text
+    def action_family(txt: str) -> str:
+        t = (txt or "").lower()
+        if "circulat" in t and ("high-vis" in t or "hi-vis" in t or "pill" in t):
+            return "High-Vis Pill Circulation"
+        if "back-ream" in t or "back ream" in t or "reamed" in t:
+            return "Back-Reaming"
+        if "chemical spot" in t or "pipe-freeing" in t:
+            return "Chemical Spot Treatment"
+        if "shut-in" in t or "shut in" in t:
+            return "Shut-In & Kill"
+        if "lcm" in t or "sweep" in t:
+            return "LCM Sweep"
+        if "rpm" in t or ("reduced" in t and "wob" in t):
+            return "RPM / WOB Adjustment"
+        if "wait" in t or "weight" in t or "mw raised" in t or "mw " in t:
+            return "Increase Mud Weight"
+        return "Other Intervention"
+
+    action_agg = {}
+    for match in top:
+        fam = action_family(match["what_worked"])
+        if fam not in action_agg:
+            action_agg[fam] = {"total": 0, "resolved": 0, "not_resolved": 0, "cases": [], "avg_hrs": 0, "avg_cost": 0}
+        action_agg[fam]["total"] += 1
+        if match["outcome"] == "resolved":
+            action_agg[fam]["resolved"] += 1
+        else:
+            action_agg[fam]["not_resolved"] += 1
+        action_agg[fam]["cases"].append({"id": match["case"]["id"], "outcome": match["outcome"]})
+        action_agg[fam]["avg_hrs"] += match["time_lost_hrs"]
+        action_agg[fam]["avg_cost"] += match["cost_impact_usd"]
+
+    what_worked = []
+    for fam, d in action_agg.items():
+        n = d["total"]
+        strength = "Strong" if n >= 3 else "Moderate" if n == 2 else "Limited"
+        what_worked.append({
+            "action": fam,
+            "total_similar_cases": n,
+            "resolved_count": d["resolved"],
+            "not_resolved_count": d["not_resolved"],
+            "success_rate_pct": round(d["resolved"] / n * 100, 0) if n else 0,
+            "evidence_strength": strength,
+            "avg_time_lost_hrs": round(d["avg_hrs"] / n, 1),
+            "avg_cost_usd": round(d["avg_cost"] / n),
+            "cases": d["cases"],
+        })
+    what_worked.sort(key=lambda x: (x["success_rate_pct"], x["total_similar_cases"]), reverse=True)
+
+    # Detect outcome variation: same action family, different outcomes
+    outcome_variation = []
+    for w in what_worked:
+        if w["resolved_count"] > 0 and w["not_resolved_count"] > 0:
+            differentiators = []
+            case_ids = [ci["id"] for ci in w["cases"]]
+            case_objs = [c for c in CASES if c["id"] in case_ids]
+            formations = set(c["formation"] for c in case_objs)
+            if len(formations) > 1:
+                differentiators.append("Different formation across cases")
+            depths = [c["depth_ft"] for c in case_objs]
+            if depths and max(depths) - min(depths) > 2000:
+                differentiators.append(f"Depth range spans {min(depths)}–{max(depths)} ft")
+            symptom_sets = [set(c["symptoms"]) for c in case_objs]
+            if len(set(frozenset(s) for s in symptom_sets)) > 1:
+                differentiators.append("Different initial symptom patterns")
+            params_diff = []
+            for k in ["torque_kftlbs", "rop_ft_hr", "mud_weight_ppg"]:
+                vals = [c["params"].get(k) for c in case_objs if c["params"].get(k) is not None]
+                if vals and max(vals) - min(vals) > 0:
+                    params_diff.append(k)
+            if params_diff:
+                differentiators.append(f"Operational parameters differ ({', '.join(params_diff)})")
+            outcome_variation.append({
+                "action": w["action"],
+                "cases": w["cases"],
+                "potential_differentiators": differentiators or ["Unknown - deeper analysis needed"],
+            })
 
     return {
         "matches": top,
         "total_found": len(scored),
-        "recommended_action": best_action,
-        "action_analysis": action_scores,
+        "what_worked_before": what_worked,
+        "outcome_variation": outcome_variation,
+        "safety_disclaimer": "Historical evidence only. Final operational decisions remain with qualified drilling personnel.",
     }
 
 
@@ -429,7 +586,220 @@ async def clear_alerts():
     return {"ok": True}
 
 
+@api_router.get("/alerts/situations")
+async def alert_situations():
+    """Cluster raw triggered alerts into meaningful operational situations."""
+    # Group by metric and severity within a time window per well
+    situations = {}
+    for a in TRIGGERED_ALERTS:
+        key = (a.get("well_id") or "?", a["metric"])
+        if key not in situations:
+            situations[key] = {
+                "well_id": a.get("well_id"),
+                "well_name": a.get("well_name"),
+                "metric": a["metric"],
+                "breach_count": 0,
+                "severities": {},
+                "first_seen": a["timestamp"],
+                "last_seen": a["timestamp"],
+                "peak_value": a["value"],
+                "threshold": a["threshold"],
+            }
+        s = situations[key]
+        s["breach_count"] += 1
+        s["severities"][a["severity"]] = s["severities"].get(a["severity"], 0) + 1
+        s["last_seen"] = max(s["last_seen"], a["timestamp"])
+        s["first_seen"] = min(s["first_seen"], a["timestamp"])
+        if a["metric"] == "rop_ft_hr":
+            s["peak_value"] = min(s["peak_value"], a["value"])
+        else:
+            s["peak_value"] = max(s["peak_value"], a["value"])
+
+    METRIC_LABELS = {
+        "torque_kftlbs": "Torque Escalation",
+        "rop_ft_hr": "ROP Deterioration",
+        "mud_weight_ppg": "Mud Weight Anomaly",
+    }
+
+    result = []
+    for (well_id, metric), s in situations.items():
+        s["situation_label"] = METRIC_LABELS.get(metric, "Operational Anomaly")
+        # Highest severity present
+        for sev in ["critical", "high", "medium", "low"]:
+            if sev in s["severities"]:
+                s["overall_severity"] = sev
+                break
+        else:
+            s["overall_severity"] = "low"
+        result.append(s)
+
+    # Combined anomaly detection
+    wells_with_multi_situations = {}
+    for s in result:
+        wells_with_multi_situations.setdefault(s["well_id"], []).append(s["situation_label"])
+    combined = [
+        {"well_id": w, "situation_label": "Combined Operational Anomaly",
+         "components": labels, "overall_severity": "high"}
+        for w, labels in wells_with_multi_situations.items() if len(labels) > 1
+    ]
+
+    return {
+        "raw_breaches": len(TRIGGERED_ALERTS),
+        "situations": sorted(result, key=lambda x: x["last_seen"], reverse=True),
+        "combined_situations": combined,
+    }
+
+
 # ==================== CASE UPLOAD ====================
+
+def _pipeline_summary(filename: str):
+    if filename.endswith(".pdf") or filename.endswith(".txt"):
+        return [
+            {"step": "UPLOAD REPORT", "status": "done", "output": filename},
+            {"step": "TEXT EXTRACTION", "status": "done", "output": "narrative text extracted"},
+            {"step": "STRUCTURED EXTRACTION", "status": "done", "output": "context/event/action/outcome/lesson parsed"},
+            {"step": "EXPERIENCE DNA CREATED", "status": "done", "output": "reusable case record"},
+        ]
+    return [
+        {"step": "UPLOAD FILE", "status": "done", "output": filename},
+        {"step": "PARSE SENSOR CURVES", "status": "done", "output": "trace rows"},
+        {"step": "ANOMALY SCAN", "status": "done", "output": "symptoms detected"},
+        {"step": "CASE CREATED", "status": "done", "output": "ingested"},
+    ]
+
+
+def extract_dna_from_text(text: str, well_name: str, formation: str) -> dict:
+    """Rule-based extraction from narrative report text (mud logs, DDR)."""
+    import re
+    t = text
+    tl = text.lower().replace(",", "")
+
+    depth_m = re.search(r"(\d{4,6})\s*(ft|feet)", tl)
+    torque_m = re.search(r"torque[^0-9\n]{0,20}(\d+\.?\d*)", tl)
+    rop_m = re.search(r"rop[^0-9\n]{0,20}(\d+\.?\d*)", tl)
+    mw_m = re.search(r"(?:mw|mud weight)[^0-9\n]{0,20}(\d+\.?\d*)", tl)
+
+    symptoms = []
+    for kw, sym in [("torque spike", "torque_spike"), ("rop drop", "rop_drop"),
+                    ("stuck", "torque_spike"), ("pack[- ]?off", "pack_off"),
+                    ("kick", "flow_increase"), ("pit gain", "pit_gain"),
+                    ("connection gas", "connection_gas"), ("loss", "mud_loss"),
+                    ("stick.?slip", "stick_slip"), ("overpull", "overpull")]:
+        if re.search(kw, tl):
+            symptoms.append(sym)
+    symptoms = list(dict.fromkeys(symptoms))
+
+    event_type = "stuck_pipe" if "stuck" in tl else "kick" if "kick" in tl else "lost_circulation" if "loss" in tl or "lcm" in tl else "vibration" if "stick" in tl else "unknown"
+    severity = "critical" if "critical" in tl or "kick" in tl else "high" if "stuck" in tl or "spike" in tl else "medium"
+
+    action_snippets = []
+    for kw in ["circulat", "back-ream", "chemical spot", "shut-in", "lcm", "reduced wob", "increased mw", "kill"]:
+        m = re.search(rf"[^.]*{kw}[^.]*\.", t, re.IGNORECASE)
+        if m:
+            action_snippets.append(m.group(0).strip())
+    action_taken = " ".join(action_snippets[:2]) or "Not specified in report"
+
+    outcome = "resolved" if any(w in tl for w in ["resolved", "freed", "restored", "recovered", "killed"]) else ("not_resolved" if any(w in tl for w in ["failed", "unable", "abandoned"]) else "unknown")
+
+    lesson_m = re.search(r"(lesson[^:]{0,20}:.{5,300})", tl, re.IGNORECASE)
+    if lesson_m:
+        lesson = lesson_m.group(1).strip()
+    else:
+        cause_m = re.search(r"(?:cause|root cause|caused by)[^.]{5,300}\.", t, re.IGNORECASE)
+        lesson = cause_m.group(0).strip() if cause_m else ""
+
+    return {
+        "context": {
+            "well_name": well_name,
+            "formation": formation,
+            "depth_ft": int(depth_m.group(1)) if depth_m else 0,
+            "conditions_note": f"Extracted from narrative ({len(text)} chars)",
+        },
+        "event_type": event_type,
+        "severity": severity,
+        "symptoms": symptoms or ["unspecified"],
+        "action_taken": action_taken,
+        "outcome": outcome,
+        "lesson": lesson,
+        "depth_ft": int(depth_m.group(1)) if depth_m else 0,
+        "params": {
+            "torque_kftlbs": float(torque_m.group(1)) if torque_m else 0,
+            "rop_ft_hr": float(rop_m.group(1)) if rop_m else 0,
+            "mud_weight_ppg": float(mw_m.group(1)) if mw_m else 0,
+        },
+        "confidence": 0.6,
+    }
+
+
+@api_router.get("/experience-dna/{case_id}")
+async def experience_dna(case_id: str):
+    """Return Experience DNA (context → event → action → outcome → lesson → evidence)."""
+    case = next((c for c in CASES if c["id"] == case_id), None)
+    if not case:
+        case = next((c for c in UPLOADED_CASES if c["id"] == case_id), None)
+    if not case:
+        raise HTTPException(404, "Case not found")
+
+    evidence = [EVIDENCE[r] for r in case.get("evidence_refs", []) if r in EVIDENCE]
+    return {
+        "case_id": case["id"],
+        "steps": [
+            {
+                "step": "context",
+                "label": "CONTEXT",
+                "content": {
+                    "formation": case["formation"],
+                    "depth_ft": case["depth_ft"],
+                    "well": case["well_name"],
+                    "conditions": f"{', '.join(case['symptoms'])} at {case['depth_ft']:,} ft" if case.get("symptoms") else "Baseline operations",
+                    "params": case.get("params", {}),
+                },
+                "evidence_count": len([e for e in evidence if e["type"] == "sensor"]),
+            },
+            {
+                "step": "event",
+                "label": "EVENT / PROBLEM",
+                "content": {
+                    "event_type": case["event_type"].replace("_", " ").title(),
+                    "severity": case["severity"],
+                    "symptoms": case["symptoms"],
+                },
+                "evidence_count": len(evidence),
+            },
+            {
+                "step": "action",
+                "label": "ACTION TAKEN",
+                "content": {"action": case.get("action_taken") or "Not recorded"},
+                "evidence_count": len([e for e in evidence if e["type"] == "daily_report"]),
+                "documented": bool(case.get("action_taken") and case["action_taken"] != "Pending review"),
+            },
+            {
+                "step": "outcome",
+                "label": "OUTCOME",
+                "content": {
+                    "outcome": case.get("outcome"),
+                    "time_lost_hrs": case.get("time_lost_hrs"),
+                    "cost_impact_usd": case.get("cost_impact_usd"),
+                },
+                "evidence_count": len([e for e in evidence if e["type"] in ("daily_report", "wc_report")]),
+                "documented": case.get("outcome") in ("resolved", "not_resolved", "partially_resolved"),
+            },
+            {
+                "step": "lesson",
+                "label": "LESSON LEARNED",
+                "content": {"lesson": case.get("lessons") or "No lesson documented — knowledge gap"},
+                "evidence_count": 1 if case.get("lessons") else 0,
+                "documented": bool(case.get("lessons")),
+            },
+            {
+                "step": "evidence",
+                "label": "EVIDENCE",
+                "content": {"records": evidence},
+                "evidence_count": len(evidence),
+            },
+        ],
+    }
+
 
 @api_router.get("/uploads")
 async def list_uploaded():
@@ -442,14 +812,17 @@ async def upload_case(
     well_name: str = Form("Uploaded Well"),
     formation: str = Form("Unknown"),
 ):
-    """Accept LAS or CSV/JSON file, extract sensor trace + auto-detected event."""
-    content = (await file.read()).decode("utf-8", errors="ignore")
+    """Accept LAS, CSV, JSON, PDF, or TXT. Sensor path OR narrative-DNA extraction."""
+    raw = await file.read()
     filename = file.filename.lower()
 
     trace = []
     meta = {}
+    extracted_dna = None
+    extracted_text = ""
 
     if filename.endswith(".las"):
+        content = raw.decode("utf-8", errors="ignore")
         parsed = parse_las(content)
         case_data = las_to_case(parsed, well_id=f"UPLOAD-{len(UPLOADED_CASES)+1}", well_name=well_name, formation=formation)
         if not case_data:
@@ -458,6 +831,7 @@ async def upload_case(
         meta = case_data
 
     elif filename.endswith(".csv"):
+        content = raw.decode("utf-8", errors="ignore")
         reader = csv.DictReader(io.StringIO(content))
         for row in reader:
             trace.append({
@@ -469,28 +843,48 @@ async def upload_case(
 
     elif filename.endswith(".json"):
         try:
-            data = json.loads(content)
+            data = json.loads(raw.decode("utf-8", errors="ignore"))
             trace = data if isinstance(data, list) else data.get("trace", [])
         except Exception as e:
             raise HTTPException(400, f"Bad JSON: {e}")
+
+    elif filename.endswith(".pdf") or filename.endswith(".txt"):
+        if filename.endswith(".pdf"):
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(raw))
+                extracted_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            except Exception as e:
+                raise HTTPException(400, f"PDF read failed: {e}")
+        else:
+            extracted_text = raw.decode("utf-8", errors="ignore")
+        if not extracted_text.strip():
+            raise HTTPException(400, "No text could be extracted")
+        extracted_dna = extract_dna_from_text(extracted_text, well_name, formation)
     else:
-        raise HTTPException(400, "Supported: .las, .csv, .json")
+        raise HTTPException(400, "Supported: .las, .csv, .json, .pdf, .txt")
 
-    if not trace:
-        raise HTTPException(400, "No data rows found")
+    if not trace and not extracted_dna:
+        raise HTTPException(400, "No data rows or narrative content found")
 
-    # Auto-detect event from trace
-    max_torque = max((p.get("torque_kftlbs", 0) for p in trace), default=0)
-    min_rop = min((p.get("rop_ft_hr", 999) for p in trace if p.get("rop_ft_hr", 0) > 0), default=0)
-    event_depth = max(trace, key=lambda p: p.get("torque_kftlbs", 0)).get("depth_ft", 0)
-
-    symptoms = []
-    if max_torque > 20:
-        symptoms.append("torque_spike")
-    if min_rop < 20 and min_rop > 0:
-        symptoms.append("rop_drop")
-    event_type = meta.get("event_type") or ("stuck_pipe" if len(symptoms) >= 2 else ("vibration" if max_torque > 15 else "normal_drilling"))
-    severity = meta.get("severity") or ("high" if max_torque > 22 else "medium" if max_torque > 18 else "low")
+    if trace:
+        max_torque = max((p.get("torque_kftlbs", 0) for p in trace), default=0)
+        min_rop = min((p.get("rop_ft_hr", 999) for p in trace if p.get("rop_ft_hr", 0) > 0), default=0)
+        event_depth = max(trace, key=lambda p: p.get("torque_kftlbs", 0)).get("depth_ft", 0)
+        symptoms = []
+        if max_torque > 20:
+            symptoms.append("torque_spike")
+        if min_rop < 20 and min_rop > 0:
+            symptoms.append("rop_drop")
+        event_type = meta.get("event_type") or ("stuck_pipe" if len(symptoms) >= 2 else ("vibration" if max_torque > 15 else "normal_drilling"))
+        severity = meta.get("severity") or ("high" if max_torque > 22 else "medium" if max_torque > 18 else "low")
+    else:
+        max_torque = extracted_dna.get("params", {}).get("torque_kftlbs", 0)
+        min_rop = extracted_dna.get("params", {}).get("rop_ft_hr", 0)
+        event_depth = extracted_dna.get("depth_ft", 0)
+        symptoms = extracted_dna.get("symptoms", [])
+        event_type = extracted_dna.get("event_type", "unknown")
+        severity = extracted_dna.get("severity", "medium")
 
     case = {
         "id": f"UPLOAD-{str(uuid.uuid4())[:8].upper()}",
@@ -505,23 +899,24 @@ async def upload_case(
         "params": {
             "torque_kftlbs": round(max_torque, 1),
             "rop_ft_hr": round(min_rop, 1),
-            "mud_weight_ppg": round(trace[-1].get("mud_weight_ppg", 0), 2),
+            "mud_weight_ppg": round(trace[-1].get("mud_weight_ppg", 0) if trace else 0, 2),
             "wob_klbs": 0, "flow_gpm": 0,
         },
-        "action_taken": "Pending review",
-        "outcome": "in_progress",
+        "action_taken": extracted_dna["action_taken"] if extracted_dna else "Pending review",
+        "outcome": extracted_dna["outcome"] if extracted_dna else "in_progress",
         "time_lost_hrs": 0,
         "cost_impact_usd": 0,
-        "lessons": "",
+        "lessons": extracted_dna["lesson"] if extracted_dna else "",
         "evidence_refs": [],
         "trace": trace,
+        "extracted_dna": extracted_dna,
+        "source_text_preview": (extracted_text[:500] if extracted_text else None),
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "filename": file.filename,
         "row_count": len(trace),
     }
     UPLOADED_CASES.append(case)
 
-    # Evaluate alerts on the ingested max metrics
     fired = evaluate_alerts({
         "torque_kftlbs": max_torque,
         "rop_ft_hr": min_rop,
@@ -530,7 +925,7 @@ async def upload_case(
         "well_name": well_name,
     })
 
-    return {"case": case, "alerts_triggered": fired}
+    return {"case": case, "alerts_triggered": fired, "extraction_pipeline": _pipeline_summary(filename)}
 
 
 @api_router.get("/uploads/{case_id}")

@@ -16,3 +16,6 @@ export const fetchConflicts = () => api.get("/conflicts").then(r => r.data);
 export const fetchKPIs = () => api.get("/kpis").then(r => r.data);
 export const fetchLiveEvent = () => api.get("/live-event").then(r => r.data);
 export const runRecall = (event) => api.post("/recall", event).then(r => r.data);
+export const fetchExperienceDna = (id) => api.get(`/experience-dna/${id}`).then(r => r.data);
+export const fetchMemoryQuality = () => api.get("/memory-quality").then(r => r.data);
+export const fetchAlertSituations = () => api.get("/alerts/situations").then(r => r.data);

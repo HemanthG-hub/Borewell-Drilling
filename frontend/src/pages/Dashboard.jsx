@@ -3,8 +3,8 @@ import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from "react-lea
 import { Link } from "react-router-dom";
 import Layout from "@/components/Layout";
 import LiveTicker from "@/components/LiveTicker";
-import { fetchKPIs, fetchWells, fetchCases } from "@/lib/api";
-import { ArrowRightIcon, DropIcon, WarningIcon, ClockCounterClockwiseIcon, CurrencyDollarIcon, GitDiffIcon, ChartLineIcon } from "@phosphor-icons/react";
+import { fetchKPIs, fetchWells, fetchCases, fetchMemoryQuality } from "@/lib/api";
+import { ArrowRightIcon, DropIcon, WarningIcon, ClockCounterClockwiseIcon, CurrencyDollarIcon, GitDiffIcon, ChartLineIcon, DnaIcon, BooksIcon, LightbulbFilamentIcon } from "@phosphor-icons/react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip as ReTooltip, CartesianGrid } from "recharts";
 
 const KpiCard = ({ label, value, sub, icon: Icon, tone = "amber", testId }) => (
@@ -24,11 +24,13 @@ export default function Dashboard() {
   const [kpis, setKpis] = useState(null);
   const [wells, setWells] = useState([]);
   const [cases, setCases] = useState([]);
+  const [memory, setMemory] = useState(null);
 
   useEffect(() => {
     fetchKPIs().then(setKpis);
     fetchWells().then(setWells);
     fetchCases().then(setCases);
+    fetchMemoryQuality().then(setMemory);
   }, []);
 
   const eventCounts = cases.reduce((acc, c) => {
@@ -47,10 +49,58 @@ export default function Dashboard() {
         </Link>
       }
     >
+      {/* Positioning strip */}
+      <div className="border-l-2 border-[#FFB000] bg-[#1E1E1E] px-4 py-3 mb-4" data-testid="positioning-strip">
+        <div className="font-display font-bold text-xs tracking-[0.2em] text-[#FFB000] mb-1">RIGRECALL · EXPERIENCE INTELLIGENCE</div>
+        <div className="text-[12px] text-[#E4E4E7]">
+          Find similar experiences · Understand what happened · Learn what was tried · See what worked · Verify with evidence
+        </div>
+      </div>
+
       {/* Live rig telemetry ticker */}
       <div className="mb-4">
         <LiveTicker />
       </div>
+
+      {/* Organizational Memory Quality */}
+      {memory && (
+        <div className="border border-[#262626] bg-[#121212] mb-4" data-testid="memory-quality">
+          <div className="px-4 py-3 border-b border-[#262626] flex justify-between items-center">
+            <div className="font-display font-bold text-sm tracking-widest flex items-center gap-2">
+              <BooksIcon size={16} weight="fill" className="text-[#FFB000]" />
+              ORGANIZATIONAL MEMORY QUALITY
+            </div>
+            <div className="text-[10px] tracking-widest text-[#71717A]">COVERAGE {memory.coverage_pct}%</div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-[#262626]">
+            {[
+              ["EXPERIENCES", memory.total_experiences],
+              ["DOCUMENTED ACTION", memory.with_documented_action],
+              ["KNOWN OUTCOME", memory.with_known_outcome],
+              ["WITH EVIDENCE", memory.with_evidence],
+              ["CONFLICTING", memory.conflicting_records],
+            ].map(([label, val]) => (
+              <div key={label} className="p-3" data-testid={`mq-${label.toLowerCase().replace(/\s/g, "-")}`}>
+                <div className="text-[9px] tracking-widest text-[#71717A]">{label}</div>
+                <div className="font-display text-2xl">{val}</div>
+              </div>
+            ))}
+          </div>
+          {memory.knowledge_gaps.length > 0 && (
+            <div className="border-t border-[#262626] p-3 space-y-2">
+              <div className="text-[10px] tracking-widest text-[#FFB000] flex items-center gap-1">
+                <LightbulbFilamentIcon size={12} weight="fill" /> KNOWLEDGE GAPS
+              </div>
+              {memory.knowledge_gaps.map((g, i) => (
+                <div key={i} className="flex gap-2 text-[12px] text-[#E4E4E7]" data-testid={`gap-${i}`}>
+                  <WarningIcon size={14} weight="fill" className={g.severity === "high" ? "text-[#FF3B30]" : "text-[#FFB000]"} />
+                  <span>{g.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" data-testid="kpi-grid">
@@ -148,16 +198,20 @@ export default function Dashboard() {
           </div>
           <div className="space-y-2">
             <Link to="/recall" className="block border border-[#262626] p-3 hover:border-[#FFB000] transition-colors" data-testid="quick-recall">
-              <div className="text-xs font-display font-bold text-white">SIMILARITY MATCH</div>
-              <div className="text-[10px] text-[#71717A] mt-1">Find historical cases matching a live event</div>
+              <div className="text-xs font-display font-bold text-white">RECALL SIMILAR EXPERIENCES</div>
+              <div className="text-[10px] text-[#71717A] mt-1">Match a live event to historical cases</div>
+            </Link>
+            <Link to="/dna" className="block border border-[#262626] p-3 hover:border-[#FFB000] transition-colors" data-testid="quick-dna">
+              <div className="text-xs font-display font-bold text-white">EXPERIENCE DNA</div>
+              <div className="text-[10px] text-[#71717A] mt-1">Context → Event → Action → Outcome → Lesson → Evidence</div>
+            </Link>
+            <Link to="/what-worked" className="block border border-[#262626] p-3 hover:border-[#FFB000] transition-colors" data-testid="quick-what-worked">
+              <div className="text-xs font-display font-bold text-white">WHAT WORKED BEFORE?</div>
+              <div className="text-[10px] text-[#71717A] mt-1">Aggregate actions across similar experiences</div>
             </Link>
             <Link to="/conflicts" className="block border border-[#262626] p-3 hover:border-[#FFB000] transition-colors" data-testid="quick-conflicts">
               <div className="text-xs font-display font-bold text-white">CONFLICT SCAN</div>
-              <div className="text-[10px] text-[#71717A] mt-1">Contradictory evidence flagged</div>
-            </Link>
-            <Link to="/assistant" className="block border border-[#262626] p-3 hover:border-[#FFB000] transition-colors" data-testid="quick-assistant">
-              <div className="text-xs font-display font-bold text-white">ASK RIGRECALL AI</div>
-              <div className="text-[10px] text-[#71717A] mt-1">Reason over case memory · Claude Sonnet 5</div>
+              <div className="text-[10px] text-[#71717A] mt-1">Contradictory evidence requiring review</div>
             </Link>
           </div>
         </div>

@@ -7,6 +7,8 @@ import os
 import logging
 import asyncio
 import random
+# Use SystemRandom (OS entropy) for stronger telemetry simulation per code review.
+_rng = random.SystemRandom()
 import csv
 import io
 from pathlib import Path
@@ -706,19 +708,20 @@ def _regex_extract_dna(text: str, well_name: str, formation: str) -> dict:
             action_snippets.append(m.group(0).strip())
     action_taken = " ".join(action_snippets[:2]) or "Not documented"
 
+    outcome = "unknown"
     if any(w in tl for w in ["resolved", "freed", "restored", "recovered", "killed"]):
         outcome = "resolved"
     elif any(w in tl for w in ["failed", "unable", "abandoned"]):
         outcome = "not_resolved"
-    else:
-        outcome = "unknown"
 
+    lesson = "Not documented"
     lesson_m = re.search(r"(lesson[^:]{0,20}:.{5,300})", tl, re.IGNORECASE)
     if lesson_m:
         lesson = lesson_m.group(1).strip()
     else:
         cause_m = re.search(r"(?:cause|root cause|caused by)[^.]{5,300}\.", t, re.IGNORECASE)
-        lesson = cause_m.group(0).strip() if cause_m else "Not documented"
+        if cause_m:
+            lesson = cause_m.group(0).strip()
 
     return {
         "context": {
@@ -1048,13 +1051,13 @@ class LiveHub:
         while True:
             await asyncio.sleep(2.0)
             # Simulate: slow depth increase, occasional torque spike
-            self.state["depth_ft"] += random.uniform(0.5, 1.5)
-            self.state["rop_ft_hr"] = max(5, self.state["rop_ft_hr"] + random.uniform(-4, 3))
-            spike = random.random() < 0.08
-            self.state["torque_kftlbs"] = max(8, self.state["torque_kftlbs"] + random.uniform(-1.5, 1.5) + (6 if spike else 0))
-            self.state["mud_weight_ppg"] = max(9, self.state["mud_weight_ppg"] + random.uniform(-0.05, 0.05))
-            self.state["flow_gpm"] = self.state["flow_gpm"] + random.uniform(-5, 5)
-            self.state["wob_klbs"] = max(15, self.state["wob_klbs"] + random.uniform(-1, 1))
+            self.state["depth_ft"] += _rng.uniform(0.5, 1.5)
+            self.state["rop_ft_hr"] = max(5, self.state["rop_ft_hr"] + _rng.uniform(-4, 3))
+            spike = _rng.random() < 0.08
+            self.state["torque_kftlbs"] = max(8, self.state["torque_kftlbs"] + _rng.uniform(-1.5, 1.5) + (6 if spike else 0))
+            self.state["mud_weight_ppg"] = max(9, self.state["mud_weight_ppg"] + _rng.uniform(-0.05, 0.05))
+            self.state["flow_gpm"] = self.state["flow_gpm"] + _rng.uniform(-5, 5)
+            self.state["wob_klbs"] = max(15, self.state["wob_klbs"] + _rng.uniform(-1, 1))
 
             # Round for display
             payload = {

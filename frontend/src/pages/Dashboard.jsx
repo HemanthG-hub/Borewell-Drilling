@@ -31,7 +31,7 @@ export default function Dashboard() {
     fetchWells().then(setWells);
     fetchCases().then(setCases);
     fetchMemoryQuality().then(setMemory);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const eventCounts = cases.reduce((acc, c) => {
     acc[c.event_type] = (acc[c.event_type] || 0) + 1;
@@ -91,8 +91,8 @@ export default function Dashboard() {
               <div className="text-[10px] tracking-widest text-[#FFB000] flex items-center gap-1">
                 <LightbulbFilamentIcon size={12} weight="fill" /> KNOWLEDGE GAPS
               </div>
-              {memory.knowledge_gaps.map((g, i) => (
-                <div key={i} className="flex gap-2 text-[12px] text-[#E4E4E7]" data-testid={`gap-${i}`}>
+              {memory.knowledge_gaps.map((g) => (
+                <div key={g.message} className="flex gap-2 text-[12px] text-[#E4E4E7]" data-testid={`gap-${memory.knowledge_gaps.indexOf(g)}`}>
                   <WarningIcon size={14} weight="fill" className={g.severity === "high" ? "text-[#FF3B30]" : "text-[#FFB000]"} />
                   <span>{g.message}</span>
                 </div>

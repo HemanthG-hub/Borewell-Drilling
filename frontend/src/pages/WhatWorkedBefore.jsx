@@ -14,7 +14,7 @@ export default function WhatWorkedBefore() {
       const r = await runRecall(e);
       setResult(r);
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Layout

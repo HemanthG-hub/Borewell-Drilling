@@ -54,7 +54,9 @@ export default function Assistant() {
                   return nm;
                 });
               }
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+              console.error("Failed to parse SSE chunk:", e);
+            }
           }
         }
       }

@@ -51,7 +51,7 @@ export default function RecallEngine() {
       setResult(r);
       setLoading(false);
     });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const radarData = result?.matches?.slice(0, 5).map(m => ({
     case: m.case.id,

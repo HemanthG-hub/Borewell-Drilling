@@ -48,9 +48,13 @@ export default function LiveTicker() {
         if (!mounted) return;
         try {
           const data = JSON.parse(e.data);
-          setPrev(p => (tick ?? p));
-          setTick(data);
-        } catch (_) {}
+          setTick(prevTick => {
+            setPrev(prevTick);
+            return data;
+          });
+        } catch (err) {
+          console.error("Failed to parse LiveTicker WebSocket message:", err);
+        }
       };
       ws.onclose = () => {
         if (!mounted) return;
@@ -65,7 +69,7 @@ export default function LiveTicker() {
       if (reconnectTimer) clearTimeout(reconnectTimer);
       wsRef.current?.close();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="border border-[#262626] bg-[#121212]" data-testid="live-ticker">

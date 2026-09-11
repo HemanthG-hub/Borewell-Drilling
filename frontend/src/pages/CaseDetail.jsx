@@ -178,7 +178,7 @@ export default function CaseDetail() {
     fetchSensorTrace(id).then(d => setTrace(d.trace));
     fetchCaseEvidence(id).then(setEvidence);
     fetchExperienceDna(id).then(setDna);
-  }, [id]);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!caseData) return <Layout title="Loading..." />;
 

@@ -24,9 +24,9 @@ from las_parser import parse_las, las_to_case
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+mongo_url = os.environ.get('MONGO_URL')
+client = AsyncIOMotorClient(mongo_url) if mongo_url else None
+db = client[os.environ['DB_NAME']] if client else None
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 
@@ -1137,4 +1137,5 @@ async def load_persisted_cases():
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    if client:
+        client.close()

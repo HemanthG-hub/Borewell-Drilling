@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { PulseIcon, ArrowUpIcon, ArrowDownIcon } from "@phosphor-icons/react";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || window.location.origin;
 
 function wsUrl() {
   const url = new URL(BACKEND_URL);
